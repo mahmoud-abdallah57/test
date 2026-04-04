@@ -1,0 +1,74 @@
+================================================================================
+EXE -> 4 Base64 text chunks, then back to EXE (Windows)
+================================================================================
+Run in the folder that contains the .exe (encode) or the part*.txt chunks (decode).
+First .exe in the folder (sorted by name) is used. Chunks are part1.txt ... part4.txt.
+Decode merges part*.txt in alphabetical order -> test.exe.
+
+--------------------------------------------------------------------------------
+1) ENCODE (PowerShell — progress bar)
+
+$e = (Get-ChildItem *.exe | Sort-Object Name | Select-Object -First 1).FullName
+Write-Progress -Activity 'Encoding EXE to Base64' -Status 'Reading binary...' -PercentComplete 5
+$b = [IO.File]::ReadAllBytes($e)
+$len = $b.Length
+$k = [Math]::Ceiling($len / 4)
+for ($i = 0; $i -lt 4; $i++) {
+    $pct = [int](($i + 1) / 4 * 100)
+    Write-Progress -Activity 'Encoding EXE to Base64' -Status "Writing part$($i+1).txt" -PercentComplete $pct
+    $s = $i * $k
+    $c = [Math]::Min($k, [Math]::Max(0, $len - $s))
+    $txt = if ($c -gt 0) { [Convert]::ToBase64String($b[$s..($s + $c - 1)]) } else { '' }
+    [IO.File]::WriteAllText("part$($i+1).txt", $txt)
+}
+Write-Progress -Activity 'Encoding EXE to Base64' -Completed
+
+--------------------------------------------------------------------------------
+2) DECODE (PowerShell — progress bar)
+
+$files = @(Get-ChildItem part*.txt | Sort-Object Name)
+if ($files.Count -eq 0) { Write-Error 'No part*.txt files in this folder.'; return }
+$sb = [System.Text.StringBuilder]::new()
+$max = [Math]::Max(1, $files.Count)
+$n = 0
+foreach ($f in $files) {
+    $n++
+    Write-Progress -Activity 'Decoding to test.exe' -Status 'Reading chunk files' -CurrentOperation $f.Name -PercentComplete ([int](70 * $n / $max))
+    [void]$sb.Append((Get-Content $f.FullName -Raw))
+}
+Write-Progress -Activity 'Decoding to test.exe' -Status 'Decoding Base64...' -PercentComplete 85
+$bytes = [Convert]::FromBase64String($sb.ToString())
+Write-Progress -Activity 'Decoding to test.exe' -Status 'Writing test.exe...' -PercentComplete 95
+[IO.File]::WriteAllBytes('test.exe', $bytes)
+Write-Progress -Activity 'Decoding to test.exe' -Completed
+
+--------------------------------------------------------------------------------
+3) From CMD.exe (progress bar — paste as one line after powershell -NoProfile -Command)
+
+Encode (replace the outer "..." with the quoted string below is awkward; easier: type
+  powershell -NoProfile
+then paste the whole block from section 1).
+
+Decode one-liner (progress while reading chunks + decode + write):
+
+powershell -NoProfile -Command "$fs=@(Get-ChildItem part*.txt|Sort-Object Name); if($fs.Count -eq 0){Write-Error 'No part*.txt'; exit 1}; $sb=[System.Text.StringBuilder]::new(); $m=[Math]::Max(1,$fs.Count); $x=0; foreach($f in $fs){$x++; Write-Progress -Activity 'Decoding' -Status 'Reading' -CurrentOperation $f.Name -PercentComplete ([int](70*$x/$m)); [void]$sb.Append((Get-Content $f.FullName -Raw))}; Write-Progress -Activity 'Decoding' -Status 'Base64 decode' -PercentComplete 85; $d=[Convert]::FromBase64String($sb.ToString()); Write-Progress -Activity 'Decoding' -Status 'Writing test.exe' -PercentComplete 95; [IO.File]::WriteAllBytes('test.exe',$d); Write-Progress -Activity 'Decoding' -Completed"
+
+(If that line fails in CMD due to quoting, run powershell -NoProfile and paste section 2.)
+
+--------------------------------------------------------------------------------
+4) One-liners without progress (for scripts / minimal output)
+
+Encode:
+$e=(Get-ChildItem *.exe|Sort-Object Name|Select-Object -First 1).FullName;$b=[IO.File]::ReadAllBytes($e);$k=[Math]::Ceiling($b.Length/4);0..3|%{$s=$_*$k;$c=[Math]::Min($k,[Math]::Max(0,$b.Length-$s));[IO.File]::WriteAllText("part$($_+1).txt",$(if($c){[Convert]::ToBase64String($b[$s..($s+$c-1)])}else{""}))}
+
+Decode:
+[IO.File]::WriteAllBytes("test.exe",[Convert]::FromBase64String((Get-ChildItem part*.txt|Sort-Object Name|ForEach-Object{Get-Content $_.FullName -Raw})-join""))
+
+--------------------------------------------------------------------------------
+5) Optional: merge ALL .txt (change part*.txt to *.txt in decode)
+   Unsafe if other .txt files exist in the folder.
+
+certutil: merge part files in sorted order first, then:
+  certutil -decode merged.txt test.exe
+
+================================================================================
